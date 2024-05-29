@@ -128,3 +128,14 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+.DS_Store
+
+*/.DS_Store
+
+.qiniu_pythonsdk_hostscache.json
+
+.vscode
+
+conf/pro.env

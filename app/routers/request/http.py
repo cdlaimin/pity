@@ -1,5 +1,6 @@
 import asyncio
 import json
+import random
 import uuid
 from json import JSONDecodeError
 from typing import List, Dict
@@ -8,6 +9,7 @@ from fastapi import Depends, APIRouter
 
 from app.core.executor import Executor
 from app.crud.test_case.TestcaseDataDao import PityTestcaseDataDao
+from app.enums.CertEnum import CertType
 from app.handler.fatcory import PityResponse
 from app.middleware.AsyncHttpClient import AsyncRequest
 from app.routers import Permission
@@ -16,6 +18,7 @@ from app.routers.request.http_schema import HttpRequestForm
 router = APIRouter(prefix="/request")
 
 # random_dict = dict()
+CERT_URL = "http://mitm.it/cert/"
 
 
 @router.post("/http")
@@ -30,14 +33,27 @@ async def http_request(data: HttpRequestForm, _=Depends(Permission())):
         return PityResponse.failed(e)
 
 
+@router.get("/cert")
+async def http_request(cert: CertType):
+    try:
+        suffix = cert.get_suffix()
+        client = AsyncRequest(CERT_URL + suffix)
+        content = await client.download()
+        shuffle = list(range(0, 9))
+        random.shuffle(shuffle)
+        filename = f"{''.join(map(lambda x: str(x), shuffle))}mitmproxy.{suffix}"
+        with open(filename, 'wb') as f:
+            f.write(content)
+        return PityResponse.file(filename, f"mitmproxy.{suffix}")
+    except Exception as e:
+        return PityResponse.failed(e)
+
+
 @router.get("/run")
 async def execute_case(env: int, case_id: int, _=Depends(Permission())):
     try:
         executor = Executor()
         test_data = await PityTestcaseDataDao.list_testcase_data_by_env(env, case_id)
-        # if not test_data:
-        #     # 说明该环境下没有测试数据
-        #     return PityResponse.failed("此环境无测试数据, 请进入用例添加🎨")
         ans = dict()
         if not test_data:
             result, _ = await executor.run(env, case_id)
@@ -54,6 +70,21 @@ async def execute_case(env: int, case_id: int, _=Depends(Permission())):
         return PityResponse.failed(e)
 
 
+@router.get("/retry", summary="根据测试数据重新运行测试用例")
+async def re_run_case(env: int, case_id: int, data_id: int = 0, _=Depends(Permission())):
+    try:
+        executor = Executor()
+        params = dict()
+        if data_id != 0:
+            # if data_id not exists, use original params (empty dict)
+            test_data = await PityTestcaseDataDao.query_record(id=data_id)
+            params = json.loads(test_data.json_data)
+        result, _ = await executor.run(env, case_id, request_param=params)
+        return PityResponse.success(result)
+    except JSONDecodeError:
+        return PityResponse.failed("测试数据不为合法的JSON")
+
+
 @router.post("/run/async")
 async def execute_case(env: int, case_id: List[int], user_info=Depends(Permission())):
     data = dict()
@@ -61,7 +92,7 @@ async def execute_case(env: int, case_id: List[int], user_info=Depends(Permissio
     await asyncio.gather(*(run_single(env, c, data) for c in case_id))
     # elapsed = time.perf_counter() - s
     # print(f"async executed in {elapsed:0.2f} seconds.")
-    return dict(code=0, data=data, msg="操作成功")
+    return PityResponse.success()
 
 
 @router.post("/run/sync")

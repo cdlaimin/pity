@@ -3,19 +3,17 @@ from typing import List
 
 from sqlalchemy import select
 
-from app.crud import Mapper
+from app.crud import Mapper, ModelWrapper
 from app.models import async_session, DatabaseHelper
-from app.models.schema.testcase_data import PityTestcaseDataForm
 from app.models.testcase_data import PityTestcaseData
-from app.utils.decorator import dao
-from app.utils.logger import Log
+from app.schema.testcase_data import PityTestcaseDataForm
 
 
-@dao(PityTestcaseData, Log("PityTestcaseDataDao"))
+@ModelWrapper(PityTestcaseData)
 class PityTestcaseDataDao(Mapper):
 
     @classmethod
-    async def insert_testcase_data(cls, form: PityTestcaseDataForm, user: int):
+    async def insert_testcase_data(cls, form: PityTestcaseDataForm, user_id: int):
         try:
             async with async_session() as session:
                 async with session.begin():
@@ -27,14 +25,14 @@ class PityTestcaseDataDao(Mapper):
                     query = result.scalars().first()
                     if query is not None:
                         raise Exception("该数据已存在, 请重新编辑")
-                    data = PityTestcaseData(**form.dict(), user=user)
+                    data = PityTestcaseData(**form.dict(), user_id=user_id)
                     session.add(data)
                     await session.flush()
                     await session.refresh(data)
                     session.expunge(data)
                     return data
         except Exception as e:
-            cls.log.error(f"新增测试数据失败, error: {str(e)}")
+            cls.__log__.error(f"新增测试数据失败, error: {str(e)}")
             raise Exception(f"新增测试数据失败, {str(e)}")
 
     @classmethod
@@ -48,12 +46,12 @@ class PityTestcaseDataDao(Mapper):
                     query = result.scalars().first()
                     if query is None:
                         raise Exception("测试数据不存在")
-                    DatabaseHelper.update_model(query, form, user)
+                    cls.update_model(query, form, user)
                     await session.flush()
                     session.expunge(query)
                     return query
         except Exception as e:
-            cls.log.error(f"编辑测试数据失败, error: {str(e)}")
+            cls.__log__.error(f"编辑测试数据失败, error: {str(e)}")
             raise Exception(f"编辑测试数据失败, {str(e)}")
 
     @classmethod
@@ -67,9 +65,9 @@ class PityTestcaseDataDao(Mapper):
                     query = result.scalars().first()
                     if query is None:
                         raise Exception("测试数据不存在")
-                    DatabaseHelper.delete_model(query, user)
+                    cls.delete_model(query, user)
         except Exception as e:
-            cls.log.error(f"删除测试数据失败, error: {str(e)}")
+            cls.__log__.error(f"删除测试数据失败, error: {str(e)}")
             raise Exception(f"删除测试数据失败, {str(e)}")
 
     @classmethod
@@ -85,7 +83,7 @@ class PityTestcaseDataDao(Mapper):
                     ans[q.env].append(q)
                 return ans
         except Exception as e:
-            cls.log.error(f"查询测试数据失败, error: {str(e)}")
+            cls.__log__.error(f"查询测试数据失败, error: {str(e)}")
             raise Exception(f"查询测试数据失败, {str(e)}")
 
     @classmethod
@@ -98,5 +96,5 @@ class PityTestcaseDataDao(Mapper):
                 result = await session.execute(sql)
                 return result.scalars().all()
         except Exception as e:
-            cls.log.error(f"查询测试数据失败, error: {str(e)}")
+            cls.__log__.error(f"查询测试数据失败, error: {str(e)}")
             raise Exception(f"查询测试数据失败, {str(e)}")

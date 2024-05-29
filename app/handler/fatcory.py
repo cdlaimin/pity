@@ -1,8 +1,12 @@
 import os
 from datetime import datetime
+from decimal import Decimal
+from typing import Any
 
 from starlette.background import BackgroundTask
 from starlette.responses import FileResponse
+
+from app.handler.encoder import jsonable_encoder
 
 
 class PityResponse(object):
@@ -36,7 +40,19 @@ class PityResponse(object):
 
     @staticmethod
     def json_serialize(obj):
-        return {k: v.strftime("%Y-%m-%d %H:%M:%S") if isinstance(v, datetime) else v for k, v in dict(obj).items()}
+        ans = dict()
+        for k, o in dict(obj).items():
+            if isinstance(o, set):
+                ans[k] = list(o)
+            elif isinstance(o, datetime):
+                ans[k] = o.strftime("%Y-%m-%d %H:%M:%S")
+            elif isinstance(o, Decimal):
+                ans[k] = str(o)
+            elif isinstance(o, bytes):
+                ans[k] = o.decode(encoding='utf-8')
+            else:
+                ans[k] = o
+        return ans
 
     @staticmethod
     def parse_sql_result(data: list):
@@ -50,8 +66,14 @@ class PityResponse(object):
         return [PityResponse.model_to_dict(x, *ignore) for x in data]
 
     @staticmethod
-    def success(data=None, code=0, msg="操作成功"):
-        return dict(code=code, msg=msg, data=data)
+    def encode_json(data: Any, *exclude: str):
+        return jsonable_encoder(data, exclude=exclude, custom_encoder={
+            datetime: lambda x: x.strftime("%Y-%m-%d %H:%M:%S")
+        })
+
+    @staticmethod
+    def success(data=None, code=0, msg="操作成功", exclude=()):
+        return PityResponse.encode_json(dict(code=code, msg=msg, data=data), *exclude)
 
     @staticmethod
     def records(data: list, code=0, msg="操作成功"):
@@ -60,12 +82,16 @@ class PityResponse(object):
     @staticmethod
     def success_with_size(data=None, code=0, msg="操作成功", total=0):
         if data is None:
-            return dict(code=code, msg=msg, data=list(), total=0)
-        return dict(code=code, msg=msg, data=data, total=total)
+            return PityResponse.encode_json(dict(code=code, msg=msg, data=list(), total=0))
+        return PityResponse.encode_json(dict(code=code, msg=msg, data=data, total=total))
 
     @staticmethod
     def failed(msg, code=110, data=None):
         return dict(code=code, msg=str(msg), data=data)
+
+    @staticmethod
+    def forbidden():
+        return dict(code=403, msg="对不起, 你没有权限")
 
     @staticmethod
     def file(filepath, filename):

@@ -2,6 +2,7 @@ from datetime import datetime
 
 from sqlalchemy import select, desc
 
+from app.crud import Mapper
 from app.crud.test_case.TestResult import TestResultDao
 from app.models import async_session
 from app.models.report import PityReport
@@ -9,7 +10,7 @@ from app.models.test_plan import PityTestPlan
 from app.utils.logger import Log
 
 
-class TestReportDao(object):
+class TestReportDao(Mapper):
     log = Log("TestReportDao")
 
     @staticmethod
@@ -82,12 +83,10 @@ class TestReportDao(object):
                 sql = select(PityReport, PityTestPlan.name).outerjoin(PityTestPlan,
                                                                       PityTestPlan.id == PityReport.plan_id
                                                                       ).where(PityReport.id == report_id)
-                print(sql)
                 data = await session.execute(sql)
                 if data is None:
                     raise Exception("报告不存在")
                 report, plan_name = data.first()
-                # report = data.scalars().first()
                 test_data = await TestResultDao.list(report_id)
                 return report, test_data, plan_name
         except Exception as e:
@@ -95,22 +94,22 @@ class TestReportDao(object):
             raise Exception(f"查询报告失败: {e}")
 
     @staticmethod
-    async def list_report(page: int, size: int, start_time: str, end_time: str, executor: int = None):
+    async def list_report(page: int, size: int, start_time: datetime, end_time: datetime, executor: int or str = None):
         """
         获取报告列表
         :param size:
         :param page:
         :param end_time:
         :param start_time:
-        :param executor:
+        :param executor: int or str
         :return:
         """
         try:
             async with async_session() as session:
-
                 sql = select(PityReport).where(PityReport.start_at.between(start_time, end_time)).order_by(
                     desc(PityReport.start_at))
                 if executor is not None:
+                    executor = executor if executor != "CPU" else 0
                     sql = sql.where(PityReport.executor == executor)
                 data = await session.execute(sql)
                 total = data.raw.rowcount

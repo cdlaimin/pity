@@ -1,5 +1,4 @@
 from sqlalchemy import Column, String, TEXT, UniqueConstraint, BOOLEAN, SMALLINT, INT
-from sqlalchemy.dialects.mysql import TINYTEXT
 
 from app.models.basic import PityBase
 
@@ -20,7 +19,7 @@ class PityTestPlan(PityBase):
     # 测试计划优先级
     priority = Column(String(3), nullable=False)
     # cron表达式
-    cron = Column(String(12), nullable=False)
+    cron = Column(String(24), nullable=False)
     # 用例列表
     case_list = Column(TEXT, nullable=False)
     # 并行/串行(是否顺序执行)
@@ -30,9 +29,9 @@ class PityTestPlan(PityBase):
     # 通知用户，目前只有邮箱，后续用户表可能要完善手机号字段，为了通知
     receiver = Column(TEXT)
     # 通知方式 0: 邮件 1: 钉钉 2: 企业微信 3: 飞书 支持多选
-    msg_type = Column(TINYTEXT)
+    msg_type = Column(TEXT)
     # 单次case失败重试间隔，默认2分钟
-    retry_minutes = Column(SMALLINT, default=2)
+    retry_minutes = Column(SMALLINT, nullable=False, default=0)
     # 测试计划是否正在执行中
     state = Column(SMALLINT, default=0, comment="0: 未开始 1: 运行中")
 
@@ -42,13 +41,13 @@ class PityTestPlan(PityBase):
 
     __tablename__ = "pity_test_plan"
 
-    __fields__ = (name, project_id, env, priority,)
+    __fields__ = (name, project_id, env, priority)
     __tag__ = "测试计划"
     __alias__ = dict(name="名称", project_id="项目", env="环境", priority="优先级", cron="cron", ordered="顺序",
                      pass_rate="通过率", msg_type="通知类型", retry_minutes="重试时间", receiver="通知人", case_list="用例列表")
 
     def __init__(self, project_id, env, case_list, name, priority, cron, ordered, pass_rate, receiver, msg_type,
-                 retry_minutes, user, state=0, id=None):
+                 user, state=0, retry_minutes=0, id=None):
         super().__init__(user, id)
         self.env = ",".join(map(str, env))
         self.case_list = ",".join(map(str, case_list))

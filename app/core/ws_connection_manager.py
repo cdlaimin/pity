@@ -33,6 +33,9 @@ class ConnectionManager:
         self.active_connections: dict[int, WebSocket] = {}
         self.log = Log("websocket")
 
+    def get_clients(self):
+        return {key: True for key in self.active_connections.keys()}
+
     async def connect(self, websocket: WebSocket, client_id: int) -> None:
         await websocket.accept()
         exist: WebSocket = self.active_connections.get(client_id)
@@ -41,11 +44,11 @@ class ConnectionManager:
             self.active_connections[client_id]: WebSocket = websocket
         else:
             self.active_connections[client_id]: WebSocket = websocket
-            self.log.info(F"websocket: 用户[{client_id}]建立连接成功！")
+            self.log.debug(F"websocket: 用户[{client_id}]建立连接成功！")
 
     def disconnect(self, client_id: int) -> None:
         del self.active_connections[client_id]
-        self.log.info(F"websocket: 用户[{client_id}] 已安全断开！")
+        self.log.debug(F"websocket: 用户[{client_id}] 已安全断开！")
 
     @staticmethod
     async def pusher(sender: WebSocket, message: MsgType) -> None:
@@ -57,7 +60,8 @@ class ConnectionManager:
             dict: sender.send_json,
             bytes: sender.send_bytes
         }
-        if func_push_msg := msg_mapping.get(type(message)):
+        func_push_msg = msg_mapping.get(type(message))
+        if func_push_msg:
             await func_push_msg(message)
         else:
             raise TypeError(F"websocket不能发送{type(message)}的内容！")
@@ -76,6 +80,10 @@ class ConnectionManager:
         """
         for connection in self.active_connections.values():
             await self.pusher(sender=connection, message=message)
+
+    async def send_data(self, user_id, msg_type, record_msg):
+        msg = dict(type=msg_type, record_msg=record_msg)
+        await self.send_personal_message(user_id, msg)
 
     async def notify(self, user_id, title=None, content=None, notice: PityNotification = None):
         """
@@ -102,7 +110,7 @@ class ConnectionManager:
                     await self.send_personal_message(user_id, WebSocketMessage.msg_count())
             # 判断是否要落入推送表
             if notice is not None:
-                await PityNotificationDao.insert_record(notice)
+                await PityNotificationDao.insert(model=notice)
         except Exception as e:
             ConnectionManager.logger.error(f"发送消息失败, {e}")
 

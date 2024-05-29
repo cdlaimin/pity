@@ -1,17 +1,16 @@
 from datetime import timedelta, datetime
+from typing import List
 
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, update
 
-from app.crud import Mapper
+from app.crud import Mapper, ModelWrapper
 from app.enums.MessageEnum import MessageTypeEnum, MessageStateEnum
 from app.models import async_session
 from app.models.broadcast_read_user import PityBroadcastReadUser
 from app.models.notification import PityNotification
-from app.utils.decorator import dao
-from app.utils.logger import Log
 
 
-@dao(PityNotification, Log("PityNotificationDao"))
+@ModelWrapper(PityNotification)
 class PityNotificationDao(Mapper):
 
     @classmethod
@@ -26,7 +25,7 @@ class PityNotificationDao(Mapper):
         ninety_days = datetime.now() - timedelta(days=90)
         # 1. 当消息类型不为广播类型时，正常查询
         if msg_type == MessageTypeEnum.others:
-            ans = await cls.list_record(msg_status=msg_status, receiver=receiver, msg_type=msg_type,
+            ans = await cls.select_list(msg_status=msg_status, receiver=receiver, msg_type=msg_type,
                                         condition=[PityNotification.created_at > ninety_days])
         else:
             # 否则需要根据是否已读进行查询 只支持90天内数据
@@ -64,3 +63,16 @@ class PityNotificationDao(Mapper):
                             if not read:
                                 ans.append(notify)
         return ans
+
+    @classmethod
+    async def delete_message(cls, session, msg_id: List[int], receiver: int):
+        async with session.begin():
+            await session.execute(
+                update(PityNotification).where(
+                    PityNotification.id.in_(msg_id),
+                    PityNotification.receiver == receiver,
+                    PityNotification.deleted_at == 0)) \
+                .values(
+                deleted_at=0,
+                updated_at=datetime.now(),
+                update_user=receiver)

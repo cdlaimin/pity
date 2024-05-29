@@ -6,8 +6,8 @@ from fastapi import Depends
 from app.core.executor import Executor
 from app.crud.test_case.TestPlan import PityTestPlanDao
 from app.handler.fatcory import PityResponse
-from app.models.schema.test_plan import PityTestPlanForm
-from app.routers import Permission
+from app.schema.test_plan import PityTestPlanForm
+from app.routers import Permission, get_session
 from app.routers.testcase.testcase import router
 from app.utils.scheduler import Scheduler
 from config import Config
@@ -18,10 +18,9 @@ async def list_test_plan(page: int, size: int, project_id: int = None, name: str
                          create_user: int = None, follow: bool = None, user_info=Depends(Permission())):
     try:
         data, total = await PityTestPlanDao.list_test_plan(page, size, project_id=project_id, name=name,
-                                                           follow=follow, priority=priority,
+                                                           follow=follow, priority=priority, role=user_info['role'],
                                                            create_user=create_user, user_id=user_info['id'])
 
-        # = PityResponse.model_to_list(data)
         ans = Scheduler.list_test_plan(data)
         return PityResponse.success_with_size(ans, total=total)
     except Exception as e:
@@ -50,9 +49,9 @@ async def update_test_plan(form: PityTestPlanForm, user_info=Depends(Permission(
 
 
 @router.get("/plan/delete")
-async def delete_test_plan(id: int, user_info=Depends(Permission(Config.MANAGER))):
+async def delete_test_plan(id: int, user_info=Depends(Permission(Config.MANAGER)), session=Depends(get_session)):
     try:
-        await PityTestPlanDao.delete_record_by_id(user_info['id'], id)
+        await PityTestPlanDao.delete_record_by_id(session, user_info['id'], id)
         Scheduler.remove(id)
     except JobLookupError:
         # 说明没找到job

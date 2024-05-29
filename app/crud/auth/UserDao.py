@@ -1,19 +1,21 @@
 import random
+import time
 from datetime import datetime
 
 from sqlalchemy import or_, select, func
 from sqlalchemy import update
 
+from app.crud import Mapper
 from app.middleware.Jwt import UserToken
 from app.middleware.RedisManager import RedisHelper
-from app.models import Session, async_session, DatabaseHelper
-from app.models.schema.user import UserUpdateForm
+from app.models import async_session
 from app.models.user import User
+from app.schema.user import UserUpdateForm
 from app.utils.logger import Log
 from config import Config
 
 
-class UserDao(object):
+class UserDao(Mapper):
     log = Log("UserDao")
 
     @staticmethod
@@ -29,7 +31,7 @@ class UserDao(object):
             raise Exception(e)
 
     @staticmethod
-    @RedisHelper.up_cache("user_list")
+    @RedisHelper.up_cache("user_list", "user_touch", key_and_suffix=("user_detail", lambda x: x[1]))
     async def update_user(user_info: UserUpdateForm, user_id: int):
         """
         变更用户的接口，主要用于用户管理页面(为管理员提供)
@@ -45,7 +47,7 @@ class UserDao(object):
                     if not user:
                         raise Exception("该用户不存在, 请检查")
                     # 开启not_null，这样只有非空字段才修改
-                    DatabaseHelper.update_model(user, user_info, user_id, True)
+                    UserDao.update_model(user, user_info, user_id, True)
                     await session.flush()
                     session.expunge(user)
                     return user
@@ -54,7 +56,7 @@ class UserDao(object):
             raise Exception(e)
 
     @staticmethod
-    @RedisHelper.up_cache("user_list")
+    @RedisHelper.up_cache("user_list", "user_touch", key_and_suffix=("user_detail", lambda x: x[0]))
     async def delete_user(id: int, user_id: int):
         """
         变更用户的接口，主要用于用户管理页面(为管理员提供)
@@ -72,12 +74,13 @@ class UserDao(object):
                     if user.role == Config.ADMIN:
                         raise Exception("你不能删除超级管理员")
                     user.update_user = user_id
-                    user.deleted_at = datetime.now()
+                    user.deleted_at = int(time.time() * 1000)
         except Exception as e:
             UserDao.log.error(f"修改用户信息失败: {str(e)}")
             raise Exception(e)
 
     @staticmethod
+    @RedisHelper.up_cache("user_list", "user_touch")
     async def register_for_github(username, name, email, avatar):
         try:
             async with async_session() as session:
@@ -95,17 +98,17 @@ class UserDao(object):
                         random_pwd = random.randint(100000, 999999)
                         user = User(username, name, UserToken.add_salt(str(random_pwd)), email, avatar)
                         session.add(user)
-                        await session.flush()
-                        session.expunge(user)
+                    await session.flush()
+                    session.expunge(user)
                     return user
         except Exception as e:
             UserDao.log.error(f"Github用户登录失败: {str(e)}")
             raise Exception("登录失败")
 
     @staticmethod
+    @RedisHelper.up_cache("user_list", "user_touch")
     async def register_user(username: str, name: str, password: str, email: str):
         """
-
         :param username: 用户名
         :param name: 姓名
         :param password: 密码
@@ -126,10 +129,14 @@ class UserDao(object):
                     # 如果用户数量为0 则注册为超管
                     if counts.scalars().first() == 0:
                         user.role = Config.ADMIN
+                    user.last_login_at = datetime.now()
                     session.add(user)
+                    await session.flush()
+                    session.expunge(user)
+                    return user
         except Exception as e:
             UserDao.log.error(f"用户注册失败: {str(e)}")
-            raise Exception("注册失败")
+            raise Exception(f"注册失败: {e}")
 
     @staticmethod
     async def login(username, password):
@@ -145,8 +152,8 @@ class UserDao(object):
                 async with session.begin():
                     # 查询用户名/密码匹配且没有被删除的用户
                     query = await session.execute(
-                        select(User).where(User.username == username, User.password == pwd,
-                                           User.deleted_at == None))
+                        select(User).where(or_(User.username == username, User.email == username), User.password == pwd,
+                                           User.deleted_at == 0))
                     user = query.scalars().first()
                     if user is None:
                         raise Exception("用户名或密码错误")
@@ -162,32 +169,51 @@ class UserDao(object):
             raise e
 
     @staticmethod
-    @RedisHelper.cache("user_list", 3 * 3600, True)
-    # TODO 先不改，里面有redis相关内容
-    def list_users():
+    @RedisHelper.cache("user_list", 3 * 3600)
+    async def list_users():
         try:
-            with Session() as session:
-                return session.query(User).all()
+            async with async_session() as session:
+                query = await session.execute(select(User))
+                return query.scalars().all()
         except Exception as e:
             UserDao.log.error(f"获取用户列表失败: {str(e)}")
             raise Exception("获取用户列表失败")
 
     @staticmethod
+    @RedisHelper.cache("user_detail", 3600)
     async def query_user(id: int):
         async with async_session() as session:
             query = await session.execute(select(User).where(User.id == id))
-            result = query.scalars().first()
-            return result
+            return query.scalars().first()
 
     @staticmethod
-    @RedisHelper.cache("user_touch", 3600)
+    @RedisHelper.cache("user_touch")
     async def list_user_touch(*user):
         try:
             if not user:
                 return []
             async with async_session() as session:
-                query = await session.execute(select(User).where(User.id.in_(user), User.deleted_at == None))
+                query = await session.execute(select(User).where(User.id.in_(user), User.deleted_at == 0))
                 return [{"email": q.email, "phone": q.phone} for q in query.scalars().all()]
         except Exception as e:
             UserDao.log.error(f"获取用户联系方式失败: {str(e)}")
             raise Exception(f"获取用户联系方式失败: {e}")
+
+    @staticmethod
+    async def reset_password(email: str, password: str):
+        pwd = UserToken.add_salt(password)
+        try:
+            async with async_session() as session:
+                async with session.begin():
+                    sql = update(User).where(User.email == email).values(password=pwd)
+                    await session.execute(sql)
+        except Exception as e:
+            UserDao.log.error(f"重置用户: {email}密码失败: {str(e)}")
+            raise Exception(f"重置{email}密码失败")
+
+    @staticmethod
+    async def query_user_by_email(email: str):
+        async with async_session() as session:
+            sql = select(User).where(User.email == email, User.is_valid == True)
+            query = await session.execute(sql)
+            return query.scalars().first()

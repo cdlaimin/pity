@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import traceback
 from pprint import pformat
 
 from fastapi import FastAPI, Request, status
@@ -9,13 +10,26 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
 from loguru._defaults import LOGURU_FORMAT
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.errors import ServerErrorMiddleware
 from starlette.types import Message
 
-from app.excpetions.RequestException import AuthException
-from app.excpetions.RequestException import PermissionException
+from app.exception.request import AuthException
+from app.exception.request import PermissionException
 from config import Config
 
+sys.path.append(__file__)
+
+# from starlette_context import middleware, plugins
+
 pity = FastAPI()
+
+# pity.add_middleware(
+#     middleware.ContextMiddleware,
+#     plugins=(
+#         plugins.ForwardedForPlugin(),
+#     ),
+# )
 
 # 配置日志格式
 INFO_FORMAT = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> " \
@@ -44,28 +58,31 @@ async def get_body(request: Request) -> bytes:
 
 @pity.middleware("http")
 async def errors_handling(request: Request, call_next):
-    body = await request.body()
+    # body = await request.body()
     try:
-        await set_body(request, await request.body())
+        # await set_body(request, await request.body())
         return await call_next(request)
     except Exception as exc:
+        traceback.print_exc()
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content=jsonable_encoder({
                 "code": 110,
                 "msg": str(exc),
-                "request_data": body,
+                # "request_data": body,
             })
         )
 
 
-def error_map(error_type: str, field: str):
+def error_map(error_type: str, field: str, msg: str = None):
     if "missing" in error_type:
         return f"缺少参数: {field}"
     if "params" in error_type:
-        return f"参数: {field} 不规范"
+        return f"参数: {field} {'不规范' if msg is None else msg}"
     if "not_allowed" in error_type:
         return f"参数: {field} 类型不正确"
+    if "type_error" in error_type:
+        return f"参数: {field} 类型不合法"
 
 
 @pity.exception_handler(RequestValidationError)
@@ -74,8 +91,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         status_code=status.HTTP_200_OK,
         content=jsonable_encoder({
             "code": 101,
-            "msg": error_map(exc.errors()[0]["type"], exc.errors()[0].get("loc", ['unknown'])[-1]) if len(
-                exc.errors()) > 0 else "参数解析失败",
+            "msg": error_map(exc.errors()[0]["type"], exc.errors()[0].get("loc", ['unknown'])[-1],
+                             exc.errors()[0].get("msg")) if len(exc.errors()) > 0 else "参数解析失败",
         })
     )
 
@@ -100,6 +117,28 @@ async def unexpected_exception_error(request: Request, exc: AuthException):
             "msg": str(exc.detail),
         })
     )
+
+
+async def global_execution_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=dict(code=110, msg="unknown error: " + str(exc)),
+    )
+
+
+# add global error
+pity.add_middleware(
+    ServerErrorMiddleware,
+    handler=global_execution_handler,
+)
+# add cors
+pity.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class InterceptHandler(logging.Handler):

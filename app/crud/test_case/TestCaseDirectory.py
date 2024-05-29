@@ -1,15 +1,17 @@
+import time
 from collections import defaultdict
 from datetime import datetime
 
 from sqlalchemy import select, asc, or_
 
+from app.crud import Mapper
 from app.models import async_session
-from app.models.schema.testcase_directory import PityTestcaseDirectoryForm
+from app.schema.testcase_directory import PityTestcaseDirectoryForm
 from app.models.testcase_directory import PityTestcaseDirectory
 from app.utils.logger import Log
 
 
-class PityTestcaseDirectoryDao(object):
+class PityTestcaseDirectoryDao(Mapper):
     log = Log("PityTestcaseDirectoryDao")
 
     @staticmethod
@@ -17,7 +19,7 @@ class PityTestcaseDirectoryDao(object):
         try:
             async with async_session() as session:
                 sql = select(PityTestcaseDirectory).where(PityTestcaseDirectory.id == directory_id,
-                                                          PityTestcaseDirectory.deleted_at == None)
+                                                          PityTestcaseDirectory.deleted_at == 0)
                 result = await session.execute(sql)
                 return result.scalars().first()
         except Exception as e:
@@ -29,7 +31,7 @@ class PityTestcaseDirectoryDao(object):
         try:
             async with async_session() as session:
                 sql = select(PityTestcaseDirectory) \
-                    .where(PityTestcaseDirectory.deleted_at == None,
+                    .where(PityTestcaseDirectory.deleted_at == 0,
                            PityTestcaseDirectory.project_id == project_id) \
                     .order_by(asc(PityTestcaseDirectory.name))
                 result = await session.execute(sql)
@@ -43,7 +45,7 @@ class PityTestcaseDirectoryDao(object):
         try:
             async with async_session() as session:
                 async with session.begin():
-                    sql = select(PityTestcaseDirectory).where(PityTestcaseDirectory.deleted_at == None,
+                    sql = select(PityTestcaseDirectory).where(PityTestcaseDirectory.deleted_at == 0,
                                                               PityTestcaseDirectory.name == form.name,
                                                               PityTestcaseDirectory.parent == form.parent,
                                                               PityTestcaseDirectory.project_id == form.project_id)
@@ -61,7 +63,7 @@ class PityTestcaseDirectoryDao(object):
             async with async_session() as session:
                 async with session.begin():
                     sql = select(PityTestcaseDirectory).where(PityTestcaseDirectory.id == form.id,
-                                                              PityTestcaseDirectory.deleted_at == None)
+                                                              PityTestcaseDirectory.deleted_at == 0)
                     result = await session.execute(sql)
                     query = result.scalars().first()
                     if query is None:
@@ -79,19 +81,26 @@ class PityTestcaseDirectoryDao(object):
             async with async_session() as session:
                 async with session.begin():
                     sql = select(PityTestcaseDirectory).where(PityTestcaseDirectory.id == id,
-                                                              PityTestcaseDirectory.deleted_at == None)
+                                                              PityTestcaseDirectory.deleted_at == 0)
                     result = await session.execute(sql)
                     query = result.scalars().first()
                     if query is None:
                         raise Exception("目录不存在")
-                    query.deleted_at = datetime.now()
+                    query.deleted_at = int(time.time() * 1000)
                     query.update_user = user
         except Exception as e:
             PityTestcaseDirectoryDao.log.error(f"删除目录失败, error: {e}")
             raise Exception(f"删除目录失败: {e}")
 
     @staticmethod
-    async def get_directory_tree(project_id: int, case_node=None):
+    async def get_directory_tree(project_id: int, case_node=None, move: bool = False) -> (list, dict):
+        """
+        通过项目获取目录树
+        :param project_id:
+        :param case_node:
+        :param move:
+        :return:
+        """
         res = await PityTestcaseDirectoryDao.list_directory(project_id)
         ans = list()
         ans_map = dict()
@@ -103,6 +112,8 @@ class PityTestcaseDirectoryDao(object):
                 ans.append(dict(
                     title=directory.name,
                     key=directory.id,
+                    value=directory.id,
+                    label=directory.name,
                     children=list(),
                 ))
             else:
@@ -111,33 +122,36 @@ class PityTestcaseDirectoryDao(object):
         # 获取到所有数据信息
         for r in ans:
             await PityTestcaseDirectoryDao.get_directory(ans_map, parent_map, r.get('key'), r.get('children'), case_map,
-                                                         case_node)
+                                                         case_node, move)
+            if not move and not r.get('children'):
+                r['disabled'] = True
         return ans, case_map
 
     @staticmethod
-    async def get_directory(ans_map: dict, parent_map, parent, children, case_map, case_node=None):
+    async def get_directory(ans_map: dict, parent_map, parent, children, case_map, case_node=None, move=False):
         current = parent_map.get(parent)
-        if current is None:
-            if case_node is None:
-                return
+        if case_node is not None:
             nodes, cs = await case_node(parent)
             children.extend(nodes)
             case_map.update(cs)
+        if current is None:
             return
         for c in current:
             temp = ans_map.get(c)
             if case_node is None:
                 child = list()
             else:
-                child, cs = await case_node(parent)
+                child, cs = await case_node(temp.id)
                 case_map.update(cs)
             children.append(dict(
                 title=temp.name,
                 key=temp.id,
                 children=child,
-                # disabled=len(child) == 0
+                label=temp.name,
+                value=temp.id,
+                disabled=len(child) == 0 and not move
             ))
-            await PityTestcaseDirectoryDao.get_directory(ans_map, parent_map, temp.id, child, case_node)
+            await PityTestcaseDirectoryDao.get_directory(ans_map, parent_map, temp.id, child, case_node, move=move)
 
     @staticmethod
     async def get_directory_son(directory_id: int):
@@ -146,7 +160,7 @@ class PityTestcaseDirectoryDao(object):
             ans = [directory_id]
             # 找出父类为directory_id或者非根的目录
             sql = select(PityTestcaseDirectory) \
-                .where(PityTestcaseDirectory.deleted_at == None,
+                .where(PityTestcaseDirectory.deleted_at == 0,
                        or_(PityTestcaseDirectory.parent == directory_id, PityTestcaseDirectory.parent != None)) \
                 .order_by(asc(PityTestcaseDirectory.name))
             result = await session.execute(sql)

@@ -1,13 +1,14 @@
 from pydantic import BaseModel, validator
 
-from app.excpetions.ParamsException import ParamsError
+from app.enums.RequestBodyEnum import BodyType
+from app.exception.error import ParamsError
 
 
 class HttpRequestForm(BaseModel):
     method: str
     url: str
     body: str = None
-    body_type: int = 0
+    body_type: BodyType = BodyType.none
     headers: dict = {}
 
     @validator('method', 'url')

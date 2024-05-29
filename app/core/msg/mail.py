@@ -3,6 +3,7 @@ from email.header import Header
 from email.mime.text import MIMEText
 from email.utils import make_msgid
 
+from awaits.awaitable import awaitable
 from jinja2.environment import Template
 
 from app.core.configuration import SystemConfiguration
@@ -24,6 +25,7 @@ class Email(Notification):
     #     client.send(receiver, subject=subject, contents=content, attachments=attachment)
 
     @staticmethod
+    @awaitable
     def send_msg(subject, content, attachment=None, *receiver):
         configuration = SystemConfiguration.get_config()
         data = configuration.get("email")
